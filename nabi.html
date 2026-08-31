@@ -724,10 +724,26 @@ body.hasbar .controls{display:none}
   }
   function haveIndonesian(){ return !!vID; }
 
-  var lastSaid = "", lastAt = 0;
+  var lastSaid = "", lastAt = 0, spokeCount = 0, lastError = null, fallbackCount = 0;
+  function voicesReady(){
+    /* Android reports an empty list until the engine wakes up. Deciding too
+       early meant falling back to English on the very first tap. */
+    return new Promise(function(res){
+      pickTalk();
+      if(voiceList.length) return res();
+      var tries = 0;
+      var iv = setInterval(function(){
+        pickTalk(); tries++;
+        if(voiceList.length || tries > 12){ clearInterval(iv); res(); }
+      }, 120);
+    });
+  }
   function announce(text, opts){
     opts = opts || {};
     if(!text) return Promise.resolve();
+    return voicesReady().then(function(){ return speakNow(text, opts); });
+  }
+  function speakNow(text, opts){
     var now = Date.now();
     if(text === lastSaid && now - lastAt < 1500) return Promise.resolve();
     lastSaid = text; lastAt = now;
@@ -736,12 +752,16 @@ body.hasbar .controls{display:none}
       try{
         speechSynthesis.cancel();
         var en = opts.lang === "en";
-        var body = P(text);
+        var body = S.P(text);
+        var usedFallback = false;
         if(!en && !vID){
-          /* no Indonesian voice on this device: use the English one, but
-             respell so it is not read as if the words were English */
-          body = opts.enText ? P(opts.enText) : respell(body);
+          /* No Indonesian voice on this device. Keep the Indonesian words,
+             respelled so an English voice lands near the right sounds.
+             Never swap in an English translation: the language being taught
+             must not change just because a voice is missing. */
+          body = respell(body);
           en = true;
+          usedFallback = true;
         }
         var u = new SpeechSynthesisUtterance(body);
         u.lang = en ? "en-GB" : "id-ID";
@@ -751,14 +771,24 @@ body.hasbar .controls{display:none}
         u.volume = 1;
         u.onend = res; u.onerror = res;
         speechSynthesis.speak(u);
+        spokeCount++;
+        if(usedFallback) fallbackCount++;
         setTimeout(res, Math.max(2500, String(body).length * 95));
-      }catch(e){ res(); }
+      }catch(e){
+        /* this used to fail silently, which is how a scope bug hid for a
+           whole round. Say so out loud in the console. */
+        lastError = String(e && e.message || e);
+        if (window.console && console.warn) console.warn("SUPER.say failed:", lastError);
+        res();
+      }
     });
   }
 
   S.say = { it: announce, stop: function(){ try{ speechSynthesis.cancel(); }catch(e){} },
             voices: function(){ return { id: vID, en: vEN, all: voiceList }; },
             haveIndonesian: haveIndonesian, respell: respell,
+            count: function(){ return spokeCount; }, error: function(){ return lastError; },
+            usedFallback: function(){ return fallbackCount > 0; },
             isIndonesian: isIndonesian, refresh: pickTalk };
 
   S.score = { award: award, food: food, streak: streakNow, feed: feed,
@@ -823,8 +853,12 @@ function render(){
    '<span class="en">Lesson: '+p.lesson_en+'</span></div></div>';
  document.querySelector(".readWrap").scrollTop=0;
  $("bar").style.width=(Object.keys(S.seen).length/NABI.length*100)+"%";
- $("note").textContent="Nabi "+(S.i+1)+" dari "+NABI.length+" · "+p.story.length+
-   " bagian cerita. Tekan Bacakan untuk mendengarkan seluruhnya.";
+ var vwarn="";
+ if(window.SUPER&&SUPER.say&&!SUPER.say.haveIndonesian())
+  vwarn=" \u00b7 \u26a0\ufe0f Suara Indonesia belum terpasang, jadi pelafalannya belum sempurna. "+
+        "Buka Pengaturan untuk cara memasangnya.";
+ $("note").innerHTML="Nabi "+(S.i+1)+" dari "+NABI.length+" \u00b7 "+p.story.length+
+   " bagian cerita. Tekan Bacakan untuk mendengarkan seluruhnya."+vwarn;
  if(window.SUPER&&SUPER.say&&S.sound)SUPER.say.it("Nabi "+(p.name_id||p.name));
  if(!S.seen[S.i]){S.seen[S.i]=1;store.set("nabi.seen",S.seen);
   if(window.SUPER&&SUPER.score){const r=SUPER.score.award("nabi",{level:3,wrongs:0});
@@ -840,13 +874,12 @@ $("play").onclick=()=>{
  const idName=(p.name_id||p.name);
  const parts=en?["Prophet "+p.name+"."].concat(p.story_en,["Lesson. "+p.lesson_en])
                :["Nabi "+idName+"."].concat(p.story,["Pelajaran. "+p.lesson_id]);
- const alt=en?parts:["Prophet "+p.name+"."].concat(p.story_en,["Lesson. "+p.lesson_en]);
  let k=0;
  const nextPart=()=>{
   if(k>=parts.length||!S.sound)return;
-  /* a whole paragraph respelled would be gibberish to look at and hard to
-     follow, so if there is no Indonesian voice we read the English version */
-  const opts={lang:en?"en":"id",rate:.85,enText:alt[k]};
+  /* the story is always read in the language chosen on screen. If the device
+     has no Indonesian voice the words are respelled, never translated. */
+  const opts={lang:en?"en":"id",rate:.85};
   (window.SUPER&&SUPER.say?SUPER.say.it(parts[k],opts):Promise.resolve())
    .then(()=>{k++;setTimeout(nextPart,180)});
  };
@@ -865,3 +898,4 @@ render();
 </script>
 </body>
 </html>
+
