@@ -636,10 +636,26 @@
   }
   function haveIndonesian(){ return !!vID; }
 
-  var lastSaid = "", lastAt = 0;
+  var lastSaid = "", lastAt = 0, spokeCount = 0, lastError = null, fallbackCount = 0;
+  function voicesReady(){
+    /* Android reports an empty list until the engine wakes up. Deciding too
+       early meant falling back to English on the very first tap. */
+    return new Promise(function(res){
+      pickTalk();
+      if(voiceList.length) return res();
+      var tries = 0;
+      var iv = setInterval(function(){
+        pickTalk(); tries++;
+        if(voiceList.length || tries > 12){ clearInterval(iv); res(); }
+      }, 120);
+    });
+  }
   function announce(text, opts){
     opts = opts || {};
     if(!text) return Promise.resolve();
+    return voicesReady().then(function(){ return speakNow(text, opts); });
+  }
+  function speakNow(text, opts){
     var now = Date.now();
     if(text === lastSaid && now - lastAt < 1500) return Promise.resolve();
     lastSaid = text; lastAt = now;
@@ -648,12 +664,16 @@
       try{
         speechSynthesis.cancel();
         var en = opts.lang === "en";
-        var body = P(text);
+        var body = S.P(text);
+        var usedFallback = false;
         if(!en && !vID){
-          /* no Indonesian voice on this device: use the English one, but
-             respell so it is not read as if the words were English */
-          body = opts.enText ? P(opts.enText) : respell(body);
+          /* No Indonesian voice on this device. Keep the Indonesian words,
+             respelled so an English voice lands near the right sounds.
+             Never swap in an English translation: the language being taught
+             must not change just because a voice is missing. */
+          body = respell(body);
           en = true;
+          usedFallback = true;
         }
         var u = new SpeechSynthesisUtterance(body);
         u.lang = en ? "en-GB" : "id-ID";
@@ -663,14 +683,24 @@
         u.volume = 1;
         u.onend = res; u.onerror = res;
         speechSynthesis.speak(u);
+        spokeCount++;
+        if(usedFallback) fallbackCount++;
         setTimeout(res, Math.max(2500, String(body).length * 95));
-      }catch(e){ res(); }
+      }catch(e){
+        /* this used to fail silently, which is how a scope bug hid for a
+           whole round. Say so out loud in the console. */
+        lastError = String(e && e.message || e);
+        if (window.console && console.warn) console.warn("SUPER.say failed:", lastError);
+        res();
+      }
     });
   }
 
   S.say = { it: announce, stop: function(){ try{ speechSynthesis.cancel(); }catch(e){} },
             voices: function(){ return { id: vID, en: vEN, all: voiceList }; },
             haveIndonesian: haveIndonesian, respell: respell,
+            count: function(){ return spokeCount; }, error: function(){ return lastError; },
+            usedFallback: function(){ return fallbackCount > 0; },
             isIndonesian: isIndonesian, refresh: pickTalk };
 
   S.score = { award: award, food: food, streak: streakNow, feed: feed,
@@ -683,3 +713,4 @@
            unlockedZoo: unlockedZoo, petStage: petStage,
            reset: function () { pset({}); } };
 })(window);
+
