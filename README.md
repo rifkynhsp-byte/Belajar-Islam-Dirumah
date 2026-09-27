@@ -6,6 +6,10 @@ stories of the 25 prophets. Arabic with both Indonesian and English meaning.
     Created with love and care by Papi Rifky and Mommy Keke
     for beloved Abang Baim and Ade Yahya.
 
+Rumah Islami is also part of [Rumah Belajar](https://github.com/rifkynhsp-byte/Learn-with-Baim),
+in its `islami/` folder, where it shares the names, XP, pet and zoo with every
+other game and links back to the main home page.
+
 ## What is inside
 
 | Page | Content |
